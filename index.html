@@ -1,56 +1,38 @@
 <!DOCTYPE html>
-<html>
-<head>
-   <title>HN</title>
-   <link href='https://maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap.min.css' rel='stylesheet'/>
-   <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.2.0/css/font-awesome.min.css" rel="stylesheet">
-   <link href='style.css' rel='stylesheet'/>
-   <meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="en"><head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="charset" >
+    <title>HackerNews Live Feed</title>
+    <link href='style.css' rel='stylesheet'/>
+
+    
 </head>
 <body>
-   <header>
-      <div class='container'>
-         <i id='back_button' class='fa fa-angle-double-left fa-4x hidden'
-         onclick='backToFrontPage()'></i>
-         <a class='no_decoration' href=''><h1>HN</h1></a>
-      </div>
-   </header>
-   <div id='main' class='container'>
-      <div id='front_page'>
-         <div id='content' class='hidden'></div>
-         <div id='scroll_text' class='hidden'>
-            <p class='lead'>Scroll Down For More</p>
-            <i class="fa fa-angle-double-down fa-lg"></i>
-         </div>
-      </div>
+    <div id="update_notification" class="hidden">New stories available! Click to refresh</div>
+    <div id="app">
+        <h1 id="title">HackerNews Live Feed</h1>
+        <nav id="navbar">
+            <ul>
+                <li><a href="#" id="nav-stories" class="active" onclick="changeSection('stories')">Stories</a></li>
+                <li><a href="#" id="nav-jobs" onclick="changeSection('jobs')">Jobs</a></li>
+                <li><a href="#" id="nav-polls" onclick="changeSection('polls')">Polls</a></li>
+                <li><a href="#" id="nav-newest" onclick="changeSection('newest')">Newest</a></li>
+            </ul>
+        </nav>
+        <button id="back_button" class="hidden" onclick="backToFrontPage()">Back to Front Page</button>
+        <div id="front_page">
+            <div id="content" class="hidden"></div>
+            <div id="scroll_text" class="hidden">Scroll for more</div>
+        </div>
+        <div id="item" class="hidden">
+            <div id="item_meta"></div>
+            <div id="comment_field"></div>
+        </div>
+    </div>
 
-      <!-- Template for displaying Items -->
-      <!-- Title, link, post, author, age, score, comments (oh shit) -->
-      <div id='item' class='hidden'>
-         <!-- This could be filled out using entryFormat() -->
-         <div id='item_meta'></div>
-
-         <!-- Comments are appended here -->
-         <div id='comments'></div>
-         <h3 id='comment_number'></h3>
-         <div id='comment_field'></div>
-      </div>
-   </div>
-
-
-   <!-- JS -->
-   <script src="https://code.jquery.com/jquery-1.11.0.min.js"></script>
-   <script src='app.js'></script>
-
-   <!-- GA -->
-   <script>
-      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
-      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
-      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
-      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
-
-      ga('create', 'UA-46793736-3', 'auto');
-      ga('send', 'pageview');
-   </script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    
+        
+    <script src="app.js"></script>
 </body>
 </html>
