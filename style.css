@@ -13,7 +13,7 @@ body {
    padding: 20px;
 }
 h1 {
-   color: #ff6600;
+   color: #000000;
    text-align: center;
    margin-top: 0;
 }
@@ -36,7 +36,7 @@ h1 {
 }
 .comment_link {
    cursor: pointer;
-   color: #ff6600;
+   color: #6211e6;
 }
 .comment_blurb {
    border-left: 2px solid #ff6600;
@@ -68,7 +68,7 @@ h1 {
 }
 /* New styles for navbar */
 #navbar {
-   background-color: #ff6600;
+   background-color: #050505;
    padding: 10px 0;
    margin-bottom: 20px;
 }
