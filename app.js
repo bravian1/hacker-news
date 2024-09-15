@@ -4,35 +4,22 @@ var itemLimit = 20;
 var offset = 0;
 var busy = false;
 var scrollThrottle = null;
-var ajaxTimeout = null;
 var lastUpdateTime = Date.now();
 var checkInterval = 60000; // Check for updates every minute
 
-// Can be list, post, or user.
 var pageType = 'list';
 var currentSection = 'stories';
 
 var baseURL = 'https://hacker-news.firebaseio.com/v0';
 
-function changeSection(section) {
-    currentSection = section;
-    itemIds = [];
-    itemList = [];
-    offset = 0;
-    $('#content').empty();
-    $('#content').addClass('hidden');
-    $('#scroll_text').addClass('hidden');
-
-    $('#navbar a').removeClass('active');
-    $('#nav-' + section).addClass('active');
-
+function fetchStoryIds(section) {
     var endpoint;
-    switch (section) {
+    switch(section) {
         case 'jobs':
             endpoint = '/jobstories.json';
             break;
         case 'polls':
-            endpoint = '/askstories.json';
+            endpoint = '/newstories.json';
             break;
         case 'newest':
             endpoint = '/newstories.json';
@@ -40,51 +27,141 @@ function changeSection(section) {
         default:
             endpoint = '/topstories.json';
     }
+    return fetch(baseURL + endpoint).then(response => response.json());
+}
 
-    $.ajax(baseURL + endpoint).done(function (topItems) {
-        console.log("Received items for " + section + ":", topItems);
-
-        itemIds = topItems;
-        offset = 0;
-        itemList = [];
-        $('#content').empty();
-        getMoreItems(topItems, offset);
-        if (section === 'newest') {
-            startUpdates();
-        } else {
-            stopUpdates();
+async function fetchPolls() {
+    document.getElementById('content').innerHTML = '<p id="loading">Loading polls...</p>';
+    try {
+        if (itemIds.length === 0) {
+            itemIds = await fetchStoryIds('polls');
         }
-    });
+
+        const polls = [];
+        while (polls.length < 5 && offset < itemIds.length) {
+            const batchIds = itemIds.slice(offset, offset + 10);
+            offset += 10;
+
+            const items = await Promise.all(batchIds.map(id => fetch(baseURL + '/item/' + id + '.json').then(response => response.json())));
+            const batchPolls = items.filter(item => item && item.type === 'poll');
+            polls.push(...batchPolls);
+
+            if (polls.length >= 5 || offset >= itemIds.length) {
+                break;
+            }
+        }
+
+        if (polls.length === 0) {
+            document.getElementById('content').innerHTML = '<p>No polls found. Try again later.</p>';
+        } else {
+            await displayPolls(polls);
+        }
+
+        document.getElementById('scroll_text').textContent = offset < itemIds.length ? 'Scroll for more' : 'No more polls to load';
+        document.getElementById('scroll_text').classList.remove('hidden');
+    } catch (error) {
+        console.error('Error fetching polls:', error);
+        document.getElementById('content').innerHTML = '<p>Error fetching polls. Please try again later.</p>';
+    }
+}
+
+async function displayPolls(polls) {
+    const pollsHtml = await Promise.all(polls.map(async (poll) => {
+        let optionsHtml = '';
+        if (poll.parts && poll.parts.length > 0) {
+            const optionPromises = poll.parts.map(id => fetch(baseURL + '/item/' + id + '.json').then(response => response.json()));
+            const options = await Promise.all(optionPromises);
+            optionsHtml = options.map(option => 
+                `<li>${option.text} (Votes: ${option.score})</li>`
+            ).join('');
+        } else {
+            optionsHtml = '<p>No options available for this poll.</p>';
+        }
+
+        return `
+            <div class="poll">
+                <h2>${poll.title}</h2>
+                <p>${poll.text || ''}</p>
+                <p>By: ${poll.by} | Score: ${poll.score} | Date: ${formatDateTime(poll.time)}</p>
+                <ul>${optionsHtml}</ul>
+            </div>
+        `;
+    }));
+
+    document.getElementById('content').innerHTML = pollsHtml.join('');
+}
+
+function changeSection(section) {
+    currentSection = section;
+    itemIds = [];
+    offset = 0;
+    document.getElementById('content').innerHTML = '';
+    document.getElementById('content').classList.add('hidden');
+    document.getElementById('scroll_text').classList.add('hidden');
+
+    document.querySelectorAll('#navbar a').forEach(a => a.classList.remove('active'));
+    document.getElementById('nav-' + section).classList.add('active');
+
+    if (section === 'polls') {
+        fetchPolls();
+    } else {
+        fetchStoryIds(section)
+            .then(topItems => {
+                itemIds = Array.isArray(topItems) ? topItems : [];
+                offset = 0;
+                itemList = [];
+                document.getElementById('content').innerHTML = '';
+                getMoreItems();
+                if (section === 'newest') {
+                    startUpdates();
+                } else {
+                    stopUpdates();
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching items:', error);
+                itemIds = [];
+                document.getElementById('content').innerHTML = '<p>Error loading items. Please try again later.</p>';
+            });
+    }
     lastUpdateTime = Date.now();
-    $('#update_notification').addClass('hidden');
+    document.getElementById('update_notification').classList.add('hidden');
 }
 
-function getMoreItems(ids, start) {
-    var end = Math.min(start + itemLimit, ids.length);
-    var itemsToLoad = ids.slice(start, end);
+function getMoreItems() {
+    if (busy || currentSection === 'polls') return;
+    busy = true;
 
-    var requests = itemsToLoad.map(function (id) {
-        return $.ajax(baseURL + '/item/' + id + '.json');
-    });
+    if (!Array.isArray(itemIds)) {
+        console.error('itemIds is not an array:', itemIds);
+        itemIds = [];
+    }
 
-    $.when.apply($, requests).done(function () {
-        var results = Array.prototype.slice.call(arguments);
-        results.forEach(function (result) {
-            var item = result[0];
-     if (currentSection === 'polls' ? (item.type === 'poll' || item.type === 'story') : true) {
-    itemList.push(item);
-    $('#content').append(entryFormat(item));
-}
+    var start = offset;
+    var end = Math.min(start + itemLimit, itemIds.length);
+    var itemsToLoad = itemIds.slice(start, end);
+
+    Promise.all(itemsToLoad.map(id => 
+        fetch(baseURL + '/item/' + id + '.json').then(response => response.json())
+    )).then(results => {
+        results.forEach(item => {
+            if (item) {
+                itemList.push(item);
+                document.getElementById('content').insertAdjacentHTML('beforeend', entryFormat(item));
+            }
         });
 
         offset = end;
         busy = false;
+        document.getElementById('content').classList.remove('hidden');
+        document.getElementById('scroll_text').classList.remove('hidden');
 
-        if (end >= ids.length) {
-            $('#scroll_text').text('No more items to load');
-        } else if (currentSection === 'polls' && $('#content').children().length < itemLimit) {
-            getMoreItems(ids, end);
+        if (end >= itemIds.length) {
+            document.getElementById('scroll_text').textContent = 'No more items to load';
         }
+    }).catch(error => {
+        console.error('Error fetching items:', error);
+        busy = false;
     });
 }
 
@@ -95,47 +172,40 @@ function formatDateTime(unixTimestamp) {
 
 function updateNewestStories() {
     if (currentSection === 'newest') {
-        $('#update_notification').text('Checking for updates...').removeClass('hidden');
-        $.ajax(baseURL + '/newstories.json').done(function (newItems) {
-            var latestItemId = newItems[0];
-            if (latestItemId > itemIds[0]) {
-                var newItemsToFetch = newItems.slice(0, newItems.indexOf(itemIds[0]));
-                var requests = newItemsToFetch.map(function (id) {
-                    return $.ajax(baseURL + '/item/' + id + '.json');
-                });
+        fetch(baseURL + '/newstories.json')
+            .then(response => response.json())
+            .then(newItems => {
+                var latestItemId = newItems[0];
+                if (latestItemId > itemIds[0]) {
+                    var newStories = newItems.filter(id => id > itemIds[0]).slice(0, 20);
+                    Promise.all(newStories.map(item => 
+                        fetch(baseURL + '/item/' + item + '.json').then(response => response.json())
+                    )).then(results => {
+                        results.sort((a, b) => b.time - a.time);
 
-                $.when.apply($, requests).done(function () {
-                    var results = Array.prototype.slice.call(arguments);
-                    results.forEach(function (result) {
-                        var item = result[0];
-                        itemIds.unshift(item.id);
-                        itemList.unshift(item);
-                    });
+                        results.forEach(result => {
+                            if (result) {
+                                document.getElementById('content').insertAdjacentHTML('afterbegin', entryFormat(result));
+                                itemIds.unshift(result.id);
+                                itemList.unshift(result);
+                            }
+                        });
 
-                    $('#update_notification').text(results.length + ' new stories added! Click to refresh').removeClass('hidden');
-                    $('#update_notification').one('click', function() {
-                        changeSection('newest');
-                        $(this).addClass('hidden');
+                        document.getElementById('update_notification').textContent = results.length + ' new stories added!';
+                        document.getElementById('update_notification').classList.remove('hidden');
+                        setTimeout(() => {
+                            document.getElementById('update_notification').classList.add('hidden');
+                        }, 3000);
                     });
-                });
-            } else {
-                $('#update_notification').text('No new stories').removeClass('hidden');
-                setTimeout(function () {
-                    $('#update_notification').addClass('hidden');
-                }, 3000);
-            }
-        });
+                }
+            });
     }
 }
 
 var updateInterval;
 
 function startUpdates() {
-    updateInterval = setInterval(function () {
-        if (currentSection === 'newest') {
-            updateNewestStories();
-        }
-    }, 30000); // Check every 30 seconds
+    updateInterval = setInterval(updateNewestStories, 30000); // Check every 30 seconds
 }
 
 function stopUpdates() {
@@ -143,33 +213,35 @@ function stopUpdates() {
 }
 
 function entryFormat(data, full) {
+    if (!data) return '';
+
     var link;
     if (data.type === 'poll') {
-        link = '<a class="lead" href="#" onclick="viewItem(this)" data-id="' + data.id + '">' + data.title + ' [poll]</a>';
+        link = `<a class="lead" href="#" onclick="viewItem(${data.id})" data-id="${data.id}">${data.title}</a>`;
     } else {
-        link = data.url ?
-            '<a class="lead" target="_blank" href="' + data.url + '">' + data.title + '</a>' :
-            '<a class="lead" href="#" onclick="viewItem(this)" data-id="' + data.id + '">' + data.title + '</a>';
+        link = data.url ? 
+        `<a class="lead" target="_blank" href="${data.url}">${data.title}</a>` :
+        `<a class="lead" href="#" onclick="viewItem(${data.id})" data-id="${data.id}">${data.title}</a>`;
     }
     var comments = data.kids ? data.kids.length : 0;
-    var commentLink = full ? ''
-        : '| <b><span class="comment_link" data-id="' + data.id + '" onclick="viewItem(this)">' + comments + ' comments</span></b>';
-    var dateTime = '<span class="post-date">' + formatDateTime(data.time) + '</span>';
-    var score = data.type === 'poll' ? data.score + ' points' : '';
-    var entryArgs = [
+    var commentLink =  full ? ''
+        : `| <b><span class="comment_link" data-id="${data.id}" onclick="viewItem(${data.id})">${comments} comments</span></b>`,
+        dateTime = `<span class="post-date">${formatDateTime(data.time)}</span>`,
+        entryArgs = [
         '<div class="item_entry">',
         link,
         '<p>',
-        score,
-        data.type !== 'poll' ? 'by ' + data.by : '',
-        ' | ' + dateTime,
+        data.score,
+        'points',
+        ` by ${data.by}`,
+        ` | ${dateTime}`,
         commentLink,
         '</p>',
         '</div>',
     ];
 
     var blurb = entryArgs.join(' ');
-    var extra = '<p>' + (data.text || '') + '</p>' + '<h3>' + comments + ' comments</h3>';
+    var extra = `<p>${data.text || ''}</p><h3>${comments} comments</h3>`;
 
     if (full)
         return blurb + extra;
@@ -177,43 +249,46 @@ function entryFormat(data, full) {
 }
 
 function getPollOptions(pollId) {
-    return $.ajax(baseURL + '/item/' + pollId + '.json').then(function (poll) {
-        var optionPromises = poll.parts.map(function (partId) {
-            return $.ajax(baseURL + '/item/' + partId + '.json');
-        });
-
-        return $.when.apply($, optionPromises).then(function () {
-            var options = Array.prototype.slice.call(arguments);
-            var optionsHtml = '<div class="poll-options">';
-            options.forEach(function (option) {
-                optionsHtml += '<div class="poll-option">';
-                optionsHtml += '<p>' + option[0].text + '</p>';
-                optionsHtml += '<p>Score: ' + option[0].score + '</p>';
+    return fetch(baseURL + '/item/' + pollId + '.json')
+        .then(response => response.json())
+        .then(poll => {
+            if (!poll || !poll.parts) return '';
+            return Promise.all(poll.parts.map(partId => 
+                fetch(baseURL + '/item/' + partId + '.json').then(response => response.json())
+            )).then(options => {
+                var optionsHtml = '<div class="poll-options">';
+                options.forEach(option => {
+                    if (option) {
+                        optionsHtml += '<div class="poll-option">';
+                        optionsHtml += `<p>${option.text}</p>`;
+                        optionsHtml += `<p>Score: ${option.score}</p>`;
+                        optionsHtml += '</div>';
+                    }
+                });
                 optionsHtml += '</div>';
+                return optionsHtml;
             });
-            optionsHtml += '</div>';
-            return optionsHtml;
         });
-    });
 }
 
-function viewItem(item) {
-    var id = $(item).data('id'),
-        item = itemList.filter(function (item) { return item.id === id; }).pop(),
-        numComments = item.kids ? item.kids.length : 0;
+function viewItem(id) {
+    var item = itemList.find(item => item.id === id);
+    if (!item) return;
+
+    var numComments = item.kids ? item.kids.length : 0;
 
     history.pushState({}, "", "item/" + id);
-    $('#item_meta').html(entryFormat(item, /* full */ true));
-    $('#front_page').addClass('hidden');
-    $('#title').addClass('hidden');
-    $('#navbar').addClass('hidden');
-    $('#item').removeClass('hidden');
-    $('#back_button').removeClass('hidden');
+    document.getElementById('item_meta').innerHTML = entryFormat(item, true);
+    document.getElementById('front_page').classList.add('hidden');
+    document.getElementById('title').classList.add('hidden');
+    document.getElementById('navbar').classList.add('hidden');
+    document.getElementById('item').classList.remove('hidden');
+    document.getElementById('back_button').classList.remove('hidden');
     pageType = 'post';
 
     if (item.type === 'poll') {
-        getPollOptions(id).then(function (pollOptionsHtml) {
-            $('#item_meta').append(pollOptionsHtml);
+        getPollOptions(id).then(pollOptionsHtml => {
+            document.getElementById('item_meta').insertAdjacentHTML('beforeend', pollOptionsHtml);
         });
     }
 
@@ -223,76 +298,60 @@ function viewItem(item) {
 function getTopComments(item) {
     var commentIds = item.kids;
 
-    $('#comment_field').empty();
+    document.getElementById('comment_field').innerHTML = '';
 
-    // Return if no comments
-    if (!commentIds) {
-        return;
-    }
+    if (!commentIds) return;
 
-    getCommentsRecursive(commentIds, $('#comment_field'));
+    getCommentsRecursive(commentIds, document.getElementById('comment_field'));
 }
 
 function getCommentsRecursive(commentIds, parentElement) {
     if (!commentIds || commentIds.length === 0) {
-        return $.Deferred().resolve();
+        return Promise.resolve();
     }
 
-    var requests = commentIds.map(function (commentId) {
-        return $.ajax(baseURL + '/item/' + commentId + '.json');
-    });
+    return Promise.all(commentIds.map(commentId => 
+        fetch(baseURL + '/item/' + commentId + '.json').then(response => response.json())
+    )).then(results => {
+        results.sort((a, b) => (b ? b.time : 0) - (a ? a.time : 0));
 
-    return $.when.apply($, requests).then(function () {
-        var comments = Array.prototype.slice.call(arguments);
-        var results = comments.map(function (comment) {
-            return comment[0];
-        }).filter(function (comment) {
-            return comment !== undefined;
-        });
-
-        // Sort comments by time, latest first
-        results.sort(function (a, b) {
-            return b.time - a.time;
-        });
-
-        var promises = results.map(function (comment) {
+        results.forEach(comment => {
             var commentElement = createCommentElement(comment);
-            parentElement.append(commentElement);
+            parentElement.appendChild(commentElement);
 
             if (comment && comment.kids && comment.kids.length > 0) {
-                var childrenContainer = $('<div class="comment_children"></div>');
-                commentElement.append(childrenContainer);
+                var childrenContainer = document.createElement('div');
+                childrenContainer.className = 'comment_children';
+                commentElement.appendChild(childrenContainer);
                 return getCommentsRecursive(comment.kids, childrenContainer);
-            } else {
-                return $.Deferred().resolve();
             }
         });
-
-        return $.when.apply($, promises);
     });
 }
 
 function createCommentElement(comment) {
-    if (!comment.text || comment.deleted) {
-        return $('<div class="comment_blurb"><p><strong>[Deleted]</strong></p><p>[This comment has been deleted]</p></div>');
-    }
-    var text = comment.text;
-    var by = '<strong>' + comment.by + '</strong>';
-    var time = '<span class="time_since">' + getDateSincePost(comment.time) + '</span>';
-    var commentElement = $('<div class="comment_blurb"></div>');
-    commentElement.append($('<p>' + by + ' ' + time + '</p>'));
+    var commentElement = document.createElement('div');
+    commentElement.className = 'comment_blurb';
 
-    commentElement.append($('<p>' + text + '</p>'));
+    if (!comment || comment.deleted) {
+        commentElement.innerHTML = '<p><strong>[Deleted]</strong></p><p>[This comment has been deleted]</p>';
+    } else {
+        var text = comment.text || '[No content]';
+        var by = `<strong>${comment.by}</strong>`;
+        var time = `<span class="time_since">${getDateSincePost(comment.time)}</span>`;
+        commentElement.innerHTML = `<p>${by} ${time}</p><p class="comment_text">${text}</p>`;
+    }
+
     return commentElement;
 }
 
 function backToFrontPage() {
     history.back();
-    $('#item').addClass('hidden');
-    $('#back_button').addClass('hidden');
-    $('#front_page').removeClass('hidden');
-    $('#title').removeClass('hidden');
-    $('#navbar').removeClass('hidden');
+    document.getElementById('item').classList.add('hidden');
+    document.getElementById('back_button').classList.add('hidden');
+    document.getElementById('front_page').classList.remove('hidden');
+    document.getElementById('title').classList.remove('hidden');
+    document.getElementById('navbar').classList.remove('hidden');
     pageType = 'list';
 }
 
@@ -313,28 +372,25 @@ function getDateSincePost(postDate) {
     return minutes + " minutes ago";
 }
 
-$(window).scroll(function () {
+window.addEventListener('scroll', () => {
     clearTimeout(scrollThrottle);
-    scrollThrottle = setTimeout(function () {
+    scrollThrottle = setTimeout(() => {
         if (pageType === 'list') {
-            if (!busy && $(window).scrollTop() + $(window).height() >= $(document).height() - 100) {
-                busy = true;
-                getMoreItems(itemIds, offset);
-            }
-            if ($(window).scrollTop() === 0) {
-                $('#update_notification').addClass('hidden');
+            if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 100) {
+                if (currentSection === 'polls') {
+                    fetchPolls();
+                } else {
+                    getMoreItems();
+                }
             }
         }
     }, 300);
 });
 
-$(document).ajaxComplete(function () {
-    clearTimeout(ajaxTimeout);
-    ajaxTimeout = setTimeout(function () {
-        $('#content').removeClass('hidden');
-        $('#scroll_text').removeClass('hidden');
-    }, 300);
-});
-
-// Initial load
 changeSection('stories');
+
+document.getElementById('nav-stories').addEventListener('click', () => changeSection('stories'));
+document.getElementById('nav-jobs').addEventListener('click', () => changeSection('jobs'));
+document.getElementById('nav-polls').addEventListener('click', () => changeSection('polls'));
+document.getElementById('nav-newest').addEventListener('click', () => changeSection('newest'));
+document.getElementById('back_button').addEventListener('click', backToFrontPage);
