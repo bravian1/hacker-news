@@ -12,13 +12,13 @@
         <h1 id="title">HackerNews Live Feed</h1>
         <nav id="navbar">
             <ul>
-                <li><a href="#" id="nav-stories" onclick="changeSection('topstories'); return false;" class="active">Stories</a></li>
-                <li><a href="#" id="nav-jobs" onclick="changeSection('jobs'); return false;">Jobs</a></li>
-                <li><a href="#" id="nav-polls" onclick="changeSection('polls'); return false;">Polls</a></li>
-                <li><a href="#" id="nav-newest" onclick="changeSection('newest'); return false;">Newest</a></li>
+                <li><a href="#" id="nav-stories" class="active">Stories</a></li>
+                <li><a href="#" id="nav-jobs">Jobs</a></li>
+                <li><a href="#" id="nav-polls">Polls</a></li>
+                <li><a href="#" id="nav-newest">Newest</a></li>
             </ul>
         </nav>
-        <button id="back_button" class="hidden" onclick="backToFrontPage()">Back to Front Page</button>
+        <button id="back_button" class="hidden">Back to Front Page</button>
         <div id="front_page">
             <div id="content" class="hidden"></div>
             <div id="scroll_text" class="hidden">Scroll for more</div>
@@ -28,8 +28,6 @@
             <div id="comment_field"></div>
         </div>
     </div>
-
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

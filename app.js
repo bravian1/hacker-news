@@ -1,148 +1,52 @@
-var itemIds = [];
-var itemList = [];
-var itemLimit = 20;
-var offset = 0;
-var busy = false;
-var scrollThrottle = null;
-var lastUpdateTime = Date.now();
-var checkInterval = 60000; // Check for updates every minute
+const baseURL = 'https://hacker-news.firebaseio.com/v0';
+let itemIds = [], itemList = [], offset = 0, busy = false;
+let pageType = 'list', currentSection = 'stories';
+let updateInterval;
 
-var pageType = 'list';
-var currentSection = 'stories';
+const loadItems = (endpoint) => {
+    fetch(`${baseURL}${endpoint}`)
+        .then(response => response.json())
+        .then(items => {
+            itemIds = items || [];
+            offset = 0;
+            itemList = [];
+            document.getElementById('content').innerHTML = '';
+            getMoreItems();
+            currentSection === 'newest' ? startUpdates() : stopUpdates();
+        })
+        .catch(error => {
+            console.error('Error fetching items:', error);
+            itemIds = [];
+            document.getElementById('content').innerHTML = '<p>Error loading items. Please try again later.</p>';
+        });
+};
 
-var baseURL = 'https://hacker-news.firebaseio.com/v0';
-
-function fetchStoryIds(section) {
-    var endpoint;
-    switch(section) {
-        case 'jobs':
-            endpoint = '/jobstories.json';
-            break;
-        case 'polls':
-            endpoint = '/newstories.json';
-            break;
-        case 'newest':
-            endpoint = '/newstories.json';
-            break;
-        default:
-            endpoint = '/topstories.json';
-    }
-    return fetch(baseURL + endpoint).then(response => response.json());
-}
-
-async function fetchPolls() {
-    document.getElementById('content').innerHTML = '<p id="loading">Loading polls...</p>';
-    try {
-        if (itemIds.length === 0) {
-            itemIds = await fetchStoryIds('polls');
-        }
-
-        const polls = [];
-        while (polls.length < 5 && offset < itemIds.length) {
-            const batchIds = itemIds.slice(offset, offset + 10);
-            offset += 10;
-
-            const items = await Promise.all(batchIds.map(id => fetch(baseURL + '/item/' + id + '.json').then(response => response.json())));
-            const batchPolls = items.filter(item => item && item.type === 'poll');
-            polls.push(...batchPolls);
-
-            if (polls.length >= 5 || offset >= itemIds.length) {
-                break;
-            }
-        }
-
-        if (polls.length === 0) {
-            document.getElementById('content').innerHTML = '<p>No polls found. Try again later.</p>';
-        } else {
-            await displayPolls(polls);
-        }
-
-        document.getElementById('scroll_text').textContent = offset < itemIds.length ? 'Scroll for more' : 'No more polls to load';
-        document.getElementById('scroll_text').classList.remove('hidden');
-    } catch (error) {
-        console.error('Error fetching polls:', error);
-        document.getElementById('content').innerHTML = '<p>Error fetching polls. Please try again later.</p>';
-    }
-}
-
-async function displayPolls(polls) {
-    const pollsHtml = await Promise.all(polls.map(async (poll) => {
-        let optionsHtml = '';
-        if (poll.parts && poll.parts.length > 0) {
-            const optionPromises = poll.parts.map(id => fetch(baseURL + '/item/' + id + '.json').then(response => response.json()));
-            const options = await Promise.all(optionPromises);
-            optionsHtml = options.map(option => 
-                `<li>${option.text} (Votes: ${option.score})</li>`
-            ).join('');
-        } else {
-            optionsHtml = '<p>No options available for this poll.</p>';
-        }
-
-        return `
-            <div class="poll">
-                <h2>${poll.title}</h2>
-                <p>${poll.text || ''}</p>
-                <p>By: ${poll.by} | Score: ${poll.score} | Date: ${formatDateTime(poll.time)}</p>
-                <ul>${optionsHtml}</ul>
-            </div>
-        `;
-    }));
-
-    document.getElementById('content').innerHTML = pollsHtml.join('');
-}
-
-function changeSection(section) {
+const changeSection = (section) => {
     currentSection = section;
-    itemIds = [];
-    offset = 0;
-    document.getElementById('content').innerHTML = '';
-    document.getElementById('content').classList.add('hidden');
-    document.getElementById('scroll_text').classList.add('hidden');
-
     document.querySelectorAll('#navbar a').forEach(a => a.classList.remove('active'));
-    document.getElementById('nav-' + section).classList.add('active');
+    document.getElementById(`nav-${section}`).classList.add('active');
+    ['content', 'scroll_text'].forEach(id => document.getElementById(id).classList.add('hidden'));
 
-    if (section === 'polls') {
-        fetchPolls();
-    } else {
-        fetchStoryIds(section)
-            .then(topItems => {
-                itemIds = Array.isArray(topItems) ? topItems : [];
-                offset = 0;
-                itemList = [];
-                document.getElementById('content').innerHTML = '';
-                getMoreItems();
-                if (section === 'newest') {
-                    startUpdates();
-                } else {
-                    stopUpdates();
-                }
-            })
-            .catch(error => {
-                console.error('Error fetching items:', error);
-                itemIds = [];
-                document.getElementById('content').innerHTML = '<p>Error loading items. Please try again later.</p>';
-            });
-    }
-    lastUpdateTime = Date.now();
+    const endpoints = {
+        jobs: '/jobstories.json',
+        polls: '/askstories.json',
+        newest: '/newstories.json',
+        stories: '/topstories.json'
+    };
+
+    loadItems(endpoints[section]);
     document.getElementById('update_notification').classList.add('hidden');
-}
+};
 
-function getMoreItems() {
-    if (busy || currentSection === 'polls') return;
+const getMoreItems = () => {
+    if (busy || !Array.isArray(itemIds)) return;
     busy = true;
 
-    if (!Array.isArray(itemIds)) {
-        console.error('itemIds is not an array:', itemIds);
-        itemIds = [];
-    }
-
-    var start = offset;
-    var end = Math.min(start + itemLimit, itemIds.length);
-    var itemsToLoad = itemIds.slice(start, end);
-
-    Promise.all(itemsToLoad.map(id => 
-        fetch(baseURL + '/item/' + id + '.json').then(response => response.json())
+    const start = offset;
+    const end = Math.min(start + 20, itemIds.length);
+    
+    Promise.all(itemIds.slice(start, end).map(id => 
+        fetch(`${baseURL}/item/${id}.json`).then(response => response.json())
     )).then(results => {
         results.forEach(item => {
             if (item) {
@@ -153,9 +57,7 @@ function getMoreItems() {
 
         offset = end;
         busy = false;
-        document.getElementById('content').classList.remove('hidden');
-        document.getElementById('scroll_text').classList.remove('hidden');
-
+        ['content', 'scroll_text'].forEach(id => document.getElementById(id).classList.remove('hidden'));
         if (end >= itemIds.length) {
             document.getElementById('scroll_text').textContent = 'No more items to load';
         }
@@ -163,127 +65,95 @@ function getMoreItems() {
         console.error('Error fetching items:', error);
         busy = false;
     });
-}
+};
 
-function formatDateTime(unixTimestamp) {
-    var date = new Date(unixTimestamp * 1000);
-    return date.toLocaleString();
-}
+const formatDateTime = (unixTimestamp) => new Date(unixTimestamp * 1000).toLocaleString();
 
-function updateNewestStories() {
-    if (currentSection === 'newest') {
-        fetch(baseURL + '/newstories.json')
-            .then(response => response.json())
-            .then(newItems => {
-                var latestItemId = newItems[0];
-                if (latestItemId > itemIds[0]) {
-                    var newStories = newItems.filter(id => id > itemIds[0]).slice(0, 20);
-                    Promise.all(newStories.map(item => 
-                        fetch(baseURL + '/item/' + item + '.json').then(response => response.json())
-                    )).then(results => {
-                        results.sort((a, b) => b.time - a.time);
+const updateNewestStories = () => {
+    if (currentSection !== 'newest') return;
 
-                        results.forEach(result => {
-                            if (result) {
-                                document.getElementById('content').insertAdjacentHTML('afterbegin', entryFormat(result));
-                                itemIds.unshift(result.id);
-                                itemList.unshift(result);
-                            }
-                        });
-
-                        document.getElementById('update_notification').textContent = results.length + ' new stories added!';
-                        document.getElementById('update_notification').classList.remove('hidden');
-                        setTimeout(() => {
-                            document.getElementById('update_notification').classList.add('hidden');
-                        }, 3000);
+    fetch(`${baseURL}/newstories.json`)
+        .then(response => response.json())
+        .then(newItems => {
+            const latestItemId = newItems[0];
+            if (latestItemId > itemIds[0]) {
+                const newStories = newItems.filter(id => id > itemIds[0]).slice(0, 20);
+                Promise.all(newStories.map(item => 
+                    fetch(`${baseURL}/item/${item}.json`).then(response => response.json())
+                )).then(results => {
+                    results.sort((a, b) => b.time - a.time).forEach(result => {
+                        if (result) {
+                            document.getElementById('content').insertAdjacentHTML('afterbegin', entryFormat(result));
+                            itemIds.unshift(result.id);
+                            itemList.unshift(result);
+                        }
                     });
-                }
-            });
-    }
-}
 
-var updateInterval;
+                    const notification = document.getElementById('update_notification');
+                    notification.textContent = `${results.length} new stories added!`;
+                    notification.classList.remove('hidden');
+                    setTimeout(() => notification.classList.add('hidden'), 3000);
+                });
+            }
+        });
+};
 
-function startUpdates() {
-    updateInterval = setInterval(updateNewestStories, 30000); // Check every 30 seconds
-}
+const startUpdates = () => updateInterval = setInterval(updateNewestStories, 30000);
+const stopUpdates = () => clearInterval(updateInterval);
 
-function stopUpdates() {
-    clearInterval(updateInterval);
-}
-
-function entryFormat(data, full) {
+const entryFormat = (data, full = false) => {
     if (!data) return '';
 
-    var link;
-    if (data.type === 'poll') {
-        link = `<a class="lead" href="#" onclick="viewItem(${data.id})" data-id="${data.id}">${data.title}</a>`;
-    } else {
-        link = data.url ? 
-        `<a class="lead" target="_blank" href="${data.url}">${data.title}</a>` :
-        `<a class="lead" href="#" onclick="viewItem(${data.id})" data-id="${data.id}">${data.title}</a>`;
-    }
-    var comments = data.kids ? data.kids.length : 0;
-    var commentLink =  full ? ''
-        : `| <b><span class="comment_link" data-id="${data.id}" onclick="viewItem(${data.id})">${comments} comments</span></b>`,
-        dateTime = `<span class="post-date">${formatDateTime(data.time)}</span>`,
-        entryArgs = [
-        '<div class="item_entry">',
-        link,
-        '<p>',
-        data.score,
-        'points',
-        ` by ${data.by}`,
-        ` | ${dateTime}`,
-        commentLink,
-        '</p>',
-        '</div>',
-    ];
+    const link = data.type === 'poll' || !data.url ?
+        `<a class="lead" href="#" onclick="viewItem(${data.id})" data-id="${data.id}">${data.title}</a>` :
+        `<a class="lead" target="_blank" href="${data.url}">${data.title}</a>`;
 
-    var blurb = entryArgs.join(' ');
-    var extra = `<p>${data.text || ''}</p><h3>${comments} comments</h3>`;
+    const comments = data.kids ? data.kids.length : 0;
+    const commentLink = full ? '' : `| <b><span class="comment_link" data-id="${data.id}" onclick="viewItem(${data.id})">${comments} comments</span></b>`;
+    const dateTime = `<span class="post-date">${formatDateTime(data.time)}</span>`;
 
-    if (full)
-        return blurb + extra;
-    return blurb;
-}
+    const blurb = `
+        <div class="item_entry">
+            ${link}
+            <p>
+                ${data.score} points by ${data.by} | ${dateTime} ${commentLink}
+            </p>
+        </div>
+    `;
 
-function getPollOptions(pollId) {
-    return fetch(baseURL + '/item/' + pollId + '.json')
+    return full ? blurb + `<p>${data.text || ''}</p><h3>${comments} comments</h3>` : blurb;
+};
+
+const getPollOptions = (pollId) => {
+    return fetch(`${baseURL}/item/${pollId}.json`)
         .then(response => response.json())
         .then(poll => {
             if (!poll || !poll.parts) return '';
             return Promise.all(poll.parts.map(partId => 
-                fetch(baseURL + '/item/' + partId + '.json').then(response => response.json())
+                fetch(`${baseURL}/item/${partId}.json`).then(response => response.json())
             )).then(options => {
-                var optionsHtml = '<div class="poll-options">';
-                options.forEach(option => {
-                    if (option) {
-                        optionsHtml += '<div class="poll-option">';
-                        optionsHtml += `<p>${option.text}</p>`;
-                        optionsHtml += `<p>Score: ${option.score}</p>`;
-                        optionsHtml += '</div>';
-                    }
-                });
-                optionsHtml += '</div>';
-                return optionsHtml;
+                return `
+                    <div class="poll-options">
+                        ${options.map(option => option ? `
+                            <div class="poll-option">
+                                <p>${option.text}</p>
+                                <p>Score: ${option.score}</p>
+                            </div>
+                        ` : '').join('')}
+                    </div>
+                `;
             });
         });
-}
+};
 
-function viewItem(id) {
-    var item = itemList.find(item => item.id === id);
+const viewItem = (id) => {
+    const item = itemList.find(item => item.id === id);
     if (!item) return;
 
-    var numComments = item.kids ? item.kids.length : 0;
-
-    history.pushState({}, "", "item/" + id);
+    history.pushState({}, "", `item/${id}`);
     document.getElementById('item_meta').innerHTML = entryFormat(item, true);
-    document.getElementById('front_page').classList.add('hidden');
-    document.getElementById('title').classList.add('hidden');
-    document.getElementById('navbar').classList.add('hidden');
-    document.getElementById('item').classList.remove('hidden');
-    document.getElementById('back_button').classList.remove('hidden');
+    ['front_page', 'title', 'navbar'].forEach(id => document.getElementById(id).classList.add('hidden'));
+    ['item', 'back_button'].forEach(id => document.getElementById(id).classList.remove('hidden'));
     pageType = 'post';
 
     if (item.type === 'poll') {
@@ -293,104 +163,81 @@ function viewItem(id) {
     }
 
     getTopComments(item);
-}
+};
 
-function getTopComments(item) {
-    var commentIds = item.kids;
-
+const getTopComments = (item) => {
     document.getElementById('comment_field').innerHTML = '';
+    if (item.kids) getCommentsRecursive(item.kids, document.getElementById('comment_field'));
+};
 
-    if (!commentIds) return;
-
-    getCommentsRecursive(commentIds, document.getElementById('comment_field'));
-}
-
-function getCommentsRecursive(commentIds, parentElement) {
-    if (!commentIds || commentIds.length === 0) {
-        return Promise.resolve();
-    }
+const getCommentsRecursive = (commentIds, parentElement) => {
+    if (!commentIds || commentIds.length === 0) return Promise.resolve();
 
     return Promise.all(commentIds.map(commentId => 
-        fetch(baseURL + '/item/' + commentId + '.json').then(response => response.json())
+        fetch(`${baseURL}/item/${commentId}.json`).then(response => response.json())
     )).then(results => {
         results.sort((a, b) => (b ? b.time : 0) - (a ? a.time : 0));
 
         results.forEach(comment => {
-            var commentElement = createCommentElement(comment);
+            const commentElement = createCommentElement(comment);
             parentElement.appendChild(commentElement);
 
             if (comment && comment.kids && comment.kids.length > 0) {
-                var childrenContainer = document.createElement('div');
+                const childrenContainer = document.createElement('div');
                 childrenContainer.className = 'comment_children';
                 commentElement.appendChild(childrenContainer);
                 return getCommentsRecursive(comment.kids, childrenContainer);
             }
         });
     });
-}
+};
 
-function createCommentElement(comment) {
-    var commentElement = document.createElement('div');
+const createCommentElement = (comment) => {
+    const commentElement = document.createElement('div');
     commentElement.className = 'comment_blurb';
 
     if (!comment || comment.deleted) {
         commentElement.innerHTML = '<p><strong>[Deleted]</strong></p><p>[This comment has been deleted]</p>';
     } else {
-        var text = comment.text || '[No content]';
-        var by = `<strong>${comment.by}</strong>`;
-        var time = `<span class="time_since">${getDateSincePost(comment.time)}</span>`;
+        const text = comment.text || '[No content]';
+        const by = `<strong>${comment.by}</strong>`;
+        const time = `<span class="time_since">${getDateSincePost(comment.time)}</span>`;
         commentElement.innerHTML = `<p>${by} ${time}</p><p class="comment_text">${text}</p>`;
     }
 
     return commentElement;
-}
+};
 
-function backToFrontPage() {
+const backToFrontPage = () => {
     history.back();
-    document.getElementById('item').classList.add('hidden');
-    document.getElementById('back_button').classList.add('hidden');
-    document.getElementById('front_page').classList.remove('hidden');
-    document.getElementById('title').classList.remove('hidden');
-    document.getElementById('navbar').classList.remove('hidden');
+    ['item', 'back_button'].forEach(id => document.getElementById(id).classList.add('hidden'));
+    ['front_page', 'title', 'navbar'].forEach(id => document.getElementById(id).classList.remove('hidden'));
     pageType = 'list';
-}
+};
 
-function getDateSincePost(postDate) {
-    var timeSince = (Date.now() / 1000) - postDate;
-    var days = Math.floor(timeSince / (60 * 60 * 24));
-
-    if (days)
-        return days + " days ago";
-
-    var hours = Math.floor(timeSince / (60 * 60));
-
-    if (hours)
-        return hours + " hours ago";
-
-    var minutes = Math.floor(timeSince / 60);
-
-    return minutes + " minutes ago";
-}
+const getDateSincePost = (postDate) => {
+    const timeSince = (Date.now() / 1000) - postDate;
+    const days = Math.floor(timeSince / (60 * 60 * 24));
+    if (days) return `${days} days ago`;
+    const hours = Math.floor(timeSince / (60 * 60));
+    if (hours) return `${hours} hours ago`;
+    const minutes = Math.floor(timeSince / 60);
+    return `${minutes} minutes ago`;
+};
 
 window.addEventListener('scroll', () => {
-    clearTimeout(scrollThrottle);
-    scrollThrottle = setTimeout(() => {
-        if (pageType === 'list') {
-            if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 100) {
-                if (currentSection === 'polls') {
-                    fetchPolls();
-                } else {
-                    getMoreItems();
-                }
-            }
+    clearTimeout(window.scrollThrottle);
+    window.scrollThrottle = setTimeout(() => {
+        if (pageType === 'list' && (window.innerHeight + window.scrollY) >= document.body.offsetHeight - 100) {
+            getMoreItems();
         }
     }, 300);
 });
 
 changeSection('stories');
 
-document.getElementById('nav-stories').addEventListener('click', () => changeSection('stories'));
-document.getElementById('nav-jobs').addEventListener('click', () => changeSection('jobs'));
-document.getElementById('nav-polls').addEventListener('click', () => changeSection('polls'));
-document.getElementById('nav-newest').addEventListener('click', () => changeSection('newest'));
+['stories', 'jobs', 'polls', 'newest'].forEach(section => {
+    document.getElementById(`nav-${section}`).addEventListener('click', () => changeSection(section));
+});
+
 document.getElementById('back_button').addEventListener('click', backToFrontPage);
